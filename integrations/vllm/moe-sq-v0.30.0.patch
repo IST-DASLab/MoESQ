@@ -2,14 +2,14 @@ MoESQ: paired48_nvfp4 sparse NVFP4 MoE backend for vLLM v0.30.0
 
 Apply with `git apply` to vllm-project/vllm at tag v0.30.0 (ced6857afa0e).
 integrations/vllm/install.sh does this for you. Runs on SM100 and SM120 with
-paired_nvfp4_kernels v0.12.0 (third_party/grouped-sparse-GEMM, b5fbf3e).
+paired_nvfp4_kernels v0.14.0 (third_party/grouped-sparse-GEMM, 39c1c82).
 
 diff --git a/tests/kernels/moe/test_paired48_fused_dispatch.py b/tests/kernels/moe/test_paired48_fused_dispatch.py
 new file mode 100644
-index 0000000000..64b0f62820
+index 0000000000..44c31d27b2
 --- /dev/null
 +++ b/tests/kernels/moe/test_paired48_fused_dispatch.py
-@@ -0,0 +1,318 @@
+@@ -0,0 +1,343 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Fused dispatch plan / combine of the capture-safe batched prepare/finalize.
@@ -328,6 +328,31 @@ index 0000000000..64b0f62820
 +                    apply_router_weight_on_input=False))
 +            assert torch.isfinite(outs[1]).all()
 +            torch.testing.assert_close(outs[0], outs[1], rtol=0, atol=0)
++
++
++@pytest.mark.skipif(
++    not ops.paired_nvfp4_supports_situ(),
++    reason="kernel wheel without SiTU in the gated-activation ops",
++)
++@pytest.mark.parametrize("beta,linear_beta", [(4.0, 25.0), (4.0, -1.0)])
++def test_situ_quant_matches_situ_and_mul(beta, linear_beta):
++    """paired48's SiTU activation quantizer equals vLLM's situ_and_mul followed by the
++    paired48 activation quantizer, byte for byte (Kimi-K3's activation)."""
++    E, cap, N, K = 6, 40, 3072, 3584
++    g = torch.Generator(device="cuda").manual_seed(11)
++    x2 = (torch.randn(E, cap, 2 * N, device="cuda", generator=g) * 12).to(torch.bfloat16)
++    counts = torch.randint(0, cap + 1, (E,), dtype=torch.int32, device="cuda",
++                           generator=g)
++    gscale = torch.rand(E, device="cuda", generator=g) * 0.05 + 0.01
++    a2 = torch.empty(E, cap, N, dtype=torch.bfloat16, device="cuda")
++    torch.ops._C.situ_and_mul(a2, x2, beta, linear_beta)
++    b_ref, s_ref = ops.paired_nvfp4_quant_act(a2, gscale, counts, K)
++    b, s = ops.paired_nvfp4_silu_mul_quant_act(
++        x2, gscale, counts, K, act=("situ", beta, linear_beta))
++    torch.testing.assert_close(s, s_ref, rtol=0, atol=0)
++    for e in range(E):
++        n = int(counts[e])
++        torch.testing.assert_close(b[e, :n], b_ref[e, :n], rtol=0, atol=0)
 diff --git a/tests/kernels/moe/test_paired48_nvfp4_arch.py b/tests/kernels/moe/test_paired48_nvfp4_arch.py
 new file mode 100644
 index 0000000000..95cba1e6ea
@@ -1950,7 +1975,7 @@ index 0000000000..a217ba7afc
 +if __name__ == "__main__":
 +    sys.exit(main())
 diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
-index 3311215016..b7ba94ff8c 100644
+index 3311215016..d40bf4c3be 100644
 --- a/vllm/_custom_ops.py
 +++ b/vllm/_custom_ops.py
 @@ -1,6 +1,7 @@
@@ -1961,7 +1986,7 @@ index 3311215016..b7ba94ff8c 100644
  from enum import IntEnum
  from typing import TYPE_CHECKING, Literal
  
-@@ -1073,6 +1074,493 @@ def cutlass_fp4_moe_mm(
+@@ -1073,6 +1074,536 @@ def cutlass_fp4_moe_mm(
      )
  
  
@@ -2216,8 +2241,14 @@ index 3311215016..b7ba94ff8c 100644
 +    expert_num_tokens: torch.Tensor,
 +    features: int,
 +    interleaved: bool = False,
++    act: tuple[str, float, float] | None = None,
 +) -> tuple[torch.Tensor, torch.Tensor]:
 +    """Fused SwiGLU + NVFP4 activation quant for GEMM2's input (sparse SFB layout).
++
++    ``act`` = ``(activation, beta, linear_beta)`` selects the gated activation
++    (``paired_nvfp4_gated_act``); None is SwiGLU. ``("situ", beta, linear_beta)``
++    is bit-identical to ``situ_and_mul`` followed by ``paired_nvfp4_quant_act``
++    and needs a wheel with ``paired_nvfp4_supports_situ``.
 +
 +    ``x2 [E, max_n, 2N]`` is GEMM1's bf16 output (gate|up halves, vLLM
 +    ``silu_and_mul`` convention). One kernel computes ``silu(gate) * up`` and
@@ -2234,6 +2265,10 @@ index 3311215016..b7ba94ff8c 100644
 +    (``paired_nvfp4_supports_fused_silu_quant``).
 +    """
 +    _ensure_paired_nvfp4_kernels()
++    if act is not None and act[0] != "silu":
++        return torch.ops.paired_nvfp4.silu_mul_quant_act(
++            x2, gscale, expert_num_tokens, features, interleaved, *act
++        )
 +    if interleaved:  # GEMM1 ran on interleaved W13 rows (paired_nvfp4_interleave_w13)
 +        return torch.ops.paired_nvfp4.silu_mul_quant_act(
 +            x2, gscale, expert_num_tokens, features, True
@@ -2241,6 +2276,37 @@ index 3311215016..b7ba94ff8c 100644
 +    return torch.ops.paired_nvfp4.silu_mul_quant_act(
 +        x2, gscale, expert_num_tokens, features
 +    )
++
++
++def paired_nvfp4_supports_situ() -> bool:
++    """True iff the installed kernel wheel's gated-activation ops take
++    ``activation="situ"`` (Kimi SiTU-GLU), in ``silu_mul_quant_act`` and, where
++    the arch has it, the fused ``group_mm_swiglu_quant`` epilogue."""
++    if not paired_nvfp4_available():
++        return False
++    op = getattr(torch.ops.paired_nvfp4, "silu_mul_quant_act", None)
++    if op is None:
++        return False
++    return any(
++        a.name == "activation" for a in op.default._schema.arguments
++    )
++
++
++def paired_nvfp4_gated_act(
++    activation, situ_beta: float | None, situ_linear_beta: float | None
++) -> tuple[str, float, float]:
++    """``(activation, beta, linear_beta)`` for the paired48 gated-activation ops,
++    from a MoEActivation and the layer's SituGLU parameters (vLLM's defaults:
++    beta 1.0, no up softcap)."""
++    name = str(getattr(activation, "value", activation))
++    if name == "situ":
++        return (
++            "situ",
++            float(situ_beta) if situ_beta else 1.0,
++            float(situ_linear_beta) if situ_linear_beta else -1.0,
++        )
++    assert name == "silu", f"paired48_nvfp4: unsupported activation {name}"
++    return ("silu", 1.0, -1.0)
 +
 +
 +def paired_nvfp4_supports_fused_swiglu() -> bool:
@@ -2280,15 +2346,17 @@ index 3311215016..b7ba94ff8c 100644
 +    features: int,
 +    k: int,
 +    tactic: tuple[int, int, int],
++    act: tuple[str, float, float] | None = None,
 +) -> tuple[torch.Tensor, torch.Tensor]:
 +    """GEMM1 on interleaved W13 with SwiGLU and GEMM2's input quantization in the
 +    epilogue: returns GEMM2's ``(b_act, sfb)``, byte-identical to GEMM1 followed by
 +    ``paired_nvfp4_silu_mul_quant_act(..., interleaved=True)``. ``features`` is
 +    GEMM1's M (2N)."""
 +    _ensure_paired_nvfp4_kernels()
++    extra = tuple(act) if act is not None and act[0] != "silu" else ()
 +    return torch.ops.paired_nvfp4.group_mm_swiglu_quant(
 +        w_comp, w_meta, w_sf, a_fp4, a_sf, alphas, expert_num_tokens, gscale2,
-+        features, k, *tactic,
++        features, k, *tactic, *extra,
 +    )
 +
 +
@@ -2548,10 +2616,10 @@ index d269c6f109..ec31fdf559 100644
          return TopKWeightAndReduceDelegate()
 diff --git a/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py b/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py
 new file mode 100644
-index 0000000000..efbca31b3f
+index 0000000000..46b2c9049a
 --- /dev/null
 +++ b/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py
-@@ -0,0 +1,725 @@
+@@ -0,0 +1,742 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""SM100 / SM120 paired-4:8 NVFP4 (W4A4) batched MoE experts.
@@ -2694,7 +2762,9 @@ index 0000000000..efbca31b3f
 +    k: int,
 +    a1q_scale: torch.Tensor | None = None,
 +) -> None:
-+    """Batched driver: quant -> sparse GEMM1 -> SiLU+mul -> quant -> sparse GEMM2.
++    """Batched driver: quant -> sparse GEMM1 -> gated act -> quant -> sparse GEMM2.
++
++    The gated activation is SwiGLU or Kimi's SiTU-GLU (``layer_state.gated_act``).
 +
 +    No permute/unpermute: the batched prepare/finalize already dispatched tokens
 +    into the ``[E, max_n, K]`` batched layout and will combine/reduce ``output``
@@ -2706,10 +2776,12 @@ index 0000000000..efbca31b3f
 +    ``[E, max_n, k/2]`` with ``a1q_scale`` = the SFB tensor — GEMM1's quant
 +    already happened inside the dispatch and is skipped here.
 +    """
-+    if activation != MoEActivation.SILU:
++    if not layer_state._supports_activation(activation):
 +        raise NotImplementedError(
-+            f"paired48_nvfp4 batched path only supports SILU, got {activation}"
++            f"paired48_nvfp4 does not support activation {activation} with the "
++            "installed paired_nvfp4_kernels wheel"
 +        )
++    act = layer_state.gated_act
 +    e = hidden_states.size(0)
 +    w1_n = 2 * n  # gate + up
 +
@@ -2748,6 +2820,7 @@ index 0000000000..efbca31b3f
 +            features=w1_n,
 +            k=k,
 +            tactic=fused_tactic,
++            act=act,
 +        )
 +    else:
 +        c1 = _resize_cache(workspace2, (e, max_n, w1_n))
@@ -2773,9 +2846,11 @@ index 0000000000..efbca31b3f
 +                expert_num_tokens,
 +                k,
 +                interleaved=layer_state.w13_interleaved,
++                act=act,
 +            )
 +        else:
 +            assert not layer_state.w13_interleaved
++            assert act[0] == "silu", "SiTU needs the fused activation quantizer"
 +            a2 = _resize_cache(workspace13, (e, max_n, n))
 +            torch.ops._C.silu_and_mul(a2, c1)
 +            a2_fp4, a2_sf = quantize_act_to_nvfp4_sfb(
@@ -2946,8 +3021,18 @@ index 0000000000..efbca31b3f
 +
 +    @staticmethod
 +    def _supports_activation(activation: MoEActivation) -> bool:
-+        # Extend once the kernel + driver cover more activations.
-+        return activation in (MoEActivation.SILU,)
++        # SiTU-GLU (Kimi-K3) needs a wheel whose gated-activation ops take it.
++        if activation == MoEActivation.SITU:
++            return ops.paired_nvfp4_supports_situ()
++        return activation == MoEActivation.SILU
++
++    @property
++    def gated_act(self) -> tuple[str, float, float]:
++        """(activation, beta, linear_beta) for the kernel's gated-activation ops."""
++        cfg = self.moe_config
++        return ops.paired_nvfp4_gated_act(
++            cfg.activation, cfg.activation_situ_beta, cfg.activation_situ_linear_beta
++        )
 +
 +    @staticmethod
 +    def _supports_parallel_config(
@@ -3069,7 +3154,7 @@ index 0000000000..efbca31b3f
 +        n = layer.w2_weight.shape[2] * 2
 +        self.w13_interleaved = (
 +            ops.paired_nvfp4_supports_fused_swiglu()
-+            and self.moe_config.activation == MoEActivation.SILU
++            and self._supports_activation(self.moe_config.activation)
 +            and n % 64 == 0
 +        )
 +        if not self.w13_interleaved:
@@ -4763,10 +4848,10 @@ index bcb2dd7796..3dac8e945d 100644
      # and is not a pooling model
 diff --git a/vllm/model_executor/warmup/paired_nvfp4_warmup.py b/vllm/model_executor/warmup/paired_nvfp4_warmup.py
 new file mode 100644
-index 0000000000..96379ef43d
+index 0000000000..e95d4ae1d3
 --- /dev/null
 +++ b/vllm/model_executor/warmup/paired_nvfp4_warmup.py
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,467 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Startup autotuner for the paired-4:8 NVFP4 sparse grouped GEMM (SM100/SM120).
@@ -5121,12 +5206,13 @@ index 0000000000..96379ef43d
 +                c1, *w13, a1, sf1, ex.g1_alphas, counts, 2 * n, k, tactic=gemm1_tactic
 +            )
 +            return ops.paired_nvfp4_silu_mul_quant_act(
-+                c1, ex.a2_gscale, counts, k, interleaved=True
++                c1, ex.a2_gscale, counts, k, interleaved=True, act=ex.gated_act
 +            )
 +
 +        def fused(tactic, cnts=counts, a=a1, sf=sf1):
 +            return ops.paired_nvfp4_group_mm_swiglu_quant(
-+                *w13, a, sf, ex.g1_alphas, cnts, ex.a2_gscale, 2 * n, k, tactic
++                *w13, a, sf, ex.g1_alphas, cnts, ex.a2_gscale, 2 * n, k, tactic,
++                act=ex.gated_act,
 +            )
 +
 +        ref_b, ref_sf = unfused()
@@ -5225,7 +5311,7 @@ index 0000000000..96379ef43d
 +        max_n = ex.tuning_capacity()
 +        caps = _capacity_buckets(small_max_n, max_n)
 +        key = (ex.num_experts, ex.intermediate_dim, ex.hidden_dim, tuple(caps))
-+        key = key + (ex.w13_interleaved,)
++        key = key + (ex.w13_interleaved, ex.gated_act)
 +        if key not in cache:
 +            buckets = [(cap, _tune_capacity(ex, cap, tactics)) for cap in caps]
 +            fused = [(cap, _tune_fused_gemm1(ex, cap, t[0])) for cap, t in buckets]

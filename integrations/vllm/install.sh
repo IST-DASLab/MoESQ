@@ -26,8 +26,8 @@ VLLM_DIR="${VLLM_DIR:-$REPO_ROOT/build/vllm}"
 TORCH_BACKEND="${TORCH_BACKEND:-cu130}"
 KERNEL_DIR="$REPO_ROOT/third_party/grouped-sparse-GEMM"
 # The kernel release the vLLM patch is pinned to (the submodule commit).
-KERNEL_TAG=v0.13.0
-KERNEL_COMMIT=db70eebaae8fdca2325a9997dfa040fc0cce225e
+KERNEL_TAG=v0.14.0
+KERNEL_COMMIT=39c1c826647c81a597dada79c0c337e3b985cdd3
 PATCH="$HERE/moe-sq-v0.30.0.patch"
 VLLM_TAG=v0.30.0
 VLLM_COMMIT=ced6857afa0ea7b2e3f0846a62e1394e90f15607

@@ -27,13 +27,13 @@ This repository contains:
 | Qwen3.5-MoE (397B-A17B) | `Qwen35MoeWrapper` | 512 experts, hybrid attention, shared experts |
 | Kimi K2 / K2.5 | `KimiK2Wrapper`, `KimiK25Wrapper`, `KimiK25FusedWrapper` | up to 384 experts |
 | Qwen3.8-Flash-Next | `Qwen4ExpWrapper` | 512 experts, hyper-connections, per-layer n-gram embedding, sparse attention |
-| Kimi-K3 | `KimiK3Wrapper` | 896 latent experts, Attention Residuals, SiTU, MXFP4 source; remote code (`fla-core`); compression only |
+| Kimi-K3 | `KimiK3Wrapper` | 896 latent experts, Attention Residuals, SiTU, MXFP4 source; remote code (`fla-core`) |
 
 The wrappers are expert-parallel. They run at any `world_size`, including a single GPU.
 
 Compression runs on any CUDA GPU (it is fake-quantized PyTorch), so Hopper nodes work as
-well as Blackwell. Qwen3.8-Flash-Next checkpoints serve with the `paired48_nvfp4` backend.
-Serving Kimi-K3 is not wired up yet: it needs a SiTU path in the kernel.
+well as Blackwell. Qwen3.8-Flash-Next and Kimi-K3 checkpoints serve with the `paired48_nvfp4` backend; Kimi-K3
+needs kernels v0.14.0, which add its SiTU activation.
 
 ## Installation
 

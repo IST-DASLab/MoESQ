@@ -6,11 +6,11 @@ patch on [vLLM v0.30.0](https://github.com/vllm-project/vllm/releases/tag/v0.30.
 expert GEMMs run on Blackwell (SM100 or SM120) sparse tensor cores through the kernels in
 [`third_party/grouped-sparse-GEMM`](https://github.com/IST-DASLab/grouped-sparse-GEMM),
 which are included as a git submodule pinned to release
-[`v0.13.0`](https://github.com/IST-DASLab/grouped-sparse-GEMM/releases/tag/v0.13.0).
+[`v0.14.0`](https://github.com/IST-DASLab/grouped-sparse-GEMM/releases/tag/v0.14.0).
 
 | File | Purpose |
 |---|---|
-| `moe-sq-v0.30.0.patch` | The `paired48_nvfp4` backend for vLLM v0.30.0: about 4.1k lines of Python in 25 files, no C++ |
+| `moe-sq-v0.30.0.patch` | The `paired48_nvfp4` backend for vLLM v0.30.0: about 4.7k lines of Python in 27 files, no C++ |
 | `install.sh` | Clones vLLM v0.30.0, applies the patch, installs the precompiled vLLM wheel, and builds the kernels against the same torch |
 
 ## Install
@@ -96,7 +96,9 @@ checkout, so don't delete it.
 - On SM120, clusters are always 1x1. GEMM1 uses the fused SwiGLU epilogue on SM120 too
   (kernels v0.13.0; the autotuner keeps it where it is faster). All released checkpoints
   serve on SM120 as well as SM100; the results below are from B200.
-- bf16 model dtype and SiLU-gated experts.
+- bf16 model dtype; SiLU-gated experts, or SiTU-gated for Kimi-K3 (kernels v0.14.0, in both
+  the unfused activation quantizer and the fused GEMM1 epilogue). The SiTU path is tested on
+  SM100 only so far.
 - EPLB and the `nixl_ep` all2all backend are not supported.
 - DP > 1 needs an all2all backend (`flashinfer_nvlink_two_sided` or `deepep_low_latency`).
 
