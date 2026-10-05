@@ -1,0 +1,69 @@
+# Kimi-K3, ours: paired-4:8 NVFP4 W4A4, gate-weighted refinement p=2 (Kimi-K2.5 settings, untuned).
+# Multi-GPU expert-parallel run: launch with scripts/slurm.sh.
+#
+# num_samples is 2048 rather than K2.5's 8192: Attention Residuals keep up to 8 block
+# snapshots next to every activation cache, so each training cache costs up to ~10x a
+# plain one (about 1.2 TB at 2048 x 4096 tokens, memory-mapped under act_cache_dir).
+
+model:
+  name: moonshotai/Kimi-K3
+  device: cuda
+  dtype: bfloat16
+
+data:
+  dataset_name: mixed
+  batch_size: 64
+  num_samples: 2048
+  max_length: 4096
+  num_workers: 8
+  val_samples: 128
+
+compression:
+  prunen: 4
+  prunem: 8
+  quant_type: nvfp4
+  groupsize: 16
+  learn_weight_values: true
+  fake_quantize_activations: true
+
+init:
+  method: gptq
+  wbits: 4
+  nsamples: 512
+  sym: true
+  trits: false
+  percdamp: 0.1
+  blocksize: 128
+  static_groups: false
+
+refine:
+  enabled: true
+  start_layer: 0
+  self_attn: false
+  num_epochs: 10
+  device_microbatch_size: 8
+  warmup_steps: 0
+  lr_decay_type: cosine
+  scheduler_min_lr: 0.1
+  masks_lr: 0.0002
+  weights_lr: 5.0e-5
+  weight_decay: 1.0
+  lion_betas: [0.9, 0.95]
+  temperature: [2.0, 0.05]
+  scale: [100, 500]
+  strength: 4
+  std: 0.01
+  logits_dtype: bfloat16
+  gate_weight_exponent: 2
+  divergence_warn_ratio: 1.5
+
+training:
+  checkpoint_dir: checkpoints/
+  log_dir: logs
+  eval_baseline: false
+  ppl_eval_every_n_layers: 1000
+  meta_init_std: 0.02
+  act_cache_dir: act_cache
+  act_cache_mmap_threshold_gb: 2.0
+
+wandb: true

@@ -1,0 +1,92 @@
+# Support x values ablation, arm 3: learn the mask, fixed values.
+
+compression:
+  fake_quantize_activations: true
+  groupsize: 16
+  learn_weight_values: false
+  prunem: 8
+  prunen: 4
+  quant_type: nvfp4
+data:
+  batch_size: 64
+  dataset_name: mixed
+  max_length: 4096
+  mixed_source_weights:
+  - 0.1
+  - 0.45
+  - 0.45
+  num_samples: 8192
+  num_workers: 8
+  open_thoughts_max_samples: 10000
+  seed: 0
+  shuffle_buffer_size: 100000
+  shuffle_seed: 1234
+  val_samples: 128
+distributed:
+  timeout_hours: 2.0
+eval:
+  default_tasks: gsm8k,arc_challenge,arc_easy,winogrande,piqa
+  ppl_max_samples: 1000
+  ppl_seed: 1234
+  split_seed: 42
+  test_size: 0.2
+init:
+  blocksize: 128
+  method: gptq
+  nsamples: 512
+  percdamp: 0.01
+  static_groups: false
+  sym: true
+  trits: false
+  wbits: 4
+logging:
+  batch_report_divisor: 5
+  calib_report_divisor: 10
+  gumbel_step_log_interval: 50
+  ppl_report_divisor: 10
+  step_report_divisor: 5
+model:
+  device: cuda
+  dtype: bfloat16
+  dummy: false
+  name: Qwen/Qwen3-30B-A3B
+refine:
+  device_microbatch_size: 16
+  divergence_warn_ratio: 1.5
+  error_decomposition: true
+  enabled: true
+  gate_weight_exponent: 2
+  lion_betas:
+  - 0.9
+  - 0.95
+  logits_dtype: bfloat16
+  lr_decay_type: cosine
+  masks_lr: 0.00025
+  num_epochs: 10
+  scale:
+  - 100
+  - 500
+  scheduler_min_lr: 0.1
+  self_attn: false
+  start_layer: 0
+  std: 0.01
+  strength: 4
+  temperature:
+  - 2
+  - 0.05
+  warmup_steps: 0
+  weight_decay: 1
+  weights_lr: 5.0e-05
+  learn_masks: true
+training:
+  act_cache_dir: act_cache
+  act_cache_mmap_threshold_gb: 2
+  checkpoint_dir: checkpoints/
+  eval_baseline: false
+  log_dir: logs
+  meta_init_std: 0.02
+  ppl_eval_every_n_layers: 6
+wandb:
+  enabled: true
+  entity: ''
+  project: moe-sq

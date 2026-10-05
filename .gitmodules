@@ -1,0 +1,3 @@
+[submodule "third_party/grouped-sparse-GEMM"]
+	path = third_party/grouped-sparse-GEMM
+	url = https://github.com/IST-DASLab/grouped-sparse-GEMM

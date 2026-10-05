@@ -1,0 +1,72 @@
+# Kimi-K2.5, OBR baseline.
+# Multi-GPU expert-parallel run: launch with scripts/slurm.sh.
+
+model:
+  name: moonshotai/Kimi-K2.5
+  device: cuda
+  dtype: bfloat16
+
+data:
+  dataset_name: mixed
+  batch_size: 64
+  num_samples: 8192
+  max_length: 4096
+  num_workers: 8
+  val_samples: 128
+
+compression:
+  prunen: 4
+  prunem: 8
+  quant_type: nvfp4
+  groupsize: 16
+  learn_weight_values: false        # BASELINE (ours: true)
+  fake_quantize_activations: true
+
+init:
+  method: obr
+  wbits: 4
+  nsamples: 512
+  sym: true
+  trits: false
+  percdamp: 0.1
+  blocksize: 128
+  static_groups: false
+  obr_alpha: 0.5                  # paper default; flat over [0.25, 0.75]
+  obr_mask_metric: wanda          # paper default
+  obr_partition: column           # paper-faithful
+  obr_solver: cholesky            # MANDATORY: CG stalls on real expert Hessians
+  obr_cg_max_iters: 1000
+  obr_cg_tol: 1.0e-6
+  obr_scale_on_masked: true
+
+refine:
+  enabled: false                    # BASELINE (ours: true) -- rest is inert
+  start_layer: 0
+  self_attn: false
+  num_epochs: 5
+  device_microbatch_size: 8
+  warmup_steps: 0
+  lr_decay_type: cosine
+  scheduler_min_lr: 0.1
+  masks_lr: 0.0002
+  weights_lr: 5.0e-5
+  weight_decay: 1.0
+  lion_betas: [0.9, 0.95]
+  temperature: [2.0, 0.05]
+  scale: [100, 500]
+  strength: 5
+  std: 0.01
+  logits_dtype: bfloat16
+  gate_weight_exponent: 0
+  divergence_warn_ratio: 1.5
+
+training:
+  checkpoint_dir: checkpoints_kobr/
+  log_dir: logs
+  eval_baseline: false
+  ppl_eval_every_n_layers: 1000
+  meta_init_std: 0.02
+  act_cache_dir: act_cache_kobr
+  act_cache_mmap_threshold_gb: 2.0
+
+wandb: true

@@ -1,0 +1,99 @@
+# Kimi-K2.5, SparseGPTQ + NVFP4 W4A4 one-shot baseline.
+# Released as Kimi-K2.5-P48NVFP4-W4A4-GS32-SGPTQ.
+# Multi-GPU expert-parallel run: launch with scripts/slurm.sh.
+
+model:
+  name: moonshotai/Kimi-K2.5
+  device: cuda
+  dtype: bfloat16
+  dummy: false
+data:
+  dataset_name: mixed
+  num_samples: 8192
+  val_samples: 128
+  batch_size: 64
+  max_length: 4096
+  num_workers: 8
+  seed: 0
+  shuffle_seed: 1234
+  shuffle_buffer_size: 100000
+  open_thoughts_max_samples: 10000
+  mixed_source_weights:
+  - 0.1
+  - 0.45
+  - 0.45
+compression:
+  prunen: 4
+  prunem: 8
+  quant_type: nvfp4
+  groupsize: 16
+  learn_weight_values: false
+  fake_quantize_activations: true
+init:
+  method: gptq
+  wbits: 4
+  nsamples: 512
+  sym: true
+  trits: false
+  percdamp: 0.1
+  blocksize: 128
+  static_groups: false
+  obr_alpha: 0.5
+  obr_mask_metric: wanda
+  obr_partition: column
+  obr_solver: cg
+  obr_cg_max_iters: 1000
+  obr_cg_tol: 1.0e-06
+  obr_scale_on_masked: true
+refine:
+  enabled: false
+  start_layer: 0
+  self_attn: false
+  num_epochs: 5
+  device_microbatch_size: 8
+  warmup_steps: 0
+  lr_decay_type: cosine
+  scheduler_min_lr: 0.1
+  masks_lr: 0.0002
+  weights_lr: 5.0e-05
+  weight_decay: 1
+  lion_betas:
+  - 0.9
+  - 0.95
+  temperature:
+  - 2
+  - 0.05
+  scale:
+  - 100
+  - 500
+  strength: 5
+  std: 0.01
+  logits_dtype: bfloat16
+  gate_weight_exponent: 0
+  divergence_warn_ratio: 1.5
+training:
+  checkpoint_dir: checkpoints/
+  log_dir: logs
+  eval_baseline: false
+  ppl_eval_every_n_layers: 1000
+  meta_init_std: 0.02
+  act_cache_dir: act_cache
+  act_cache_mmap_threshold_gb: 2
+eval:
+  default_tasks: gsm8k,arc_challenge,arc_easy,winogrande,piqa
+  ppl_seed: 1234
+  ppl_max_samples: 1000
+  test_size: 0.2
+  split_seed: 42
+distributed:
+  timeout_hours: 2
+wandb:
+  enabled: true
+  project: moe-sq
+  entity: ''
+logging:
+  gumbel_step_log_interval: 50
+  step_report_divisor: 5
+  calib_report_divisor: 10
+  ppl_report_divisor: 10
+  batch_report_divisor: 5

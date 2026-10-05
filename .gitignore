@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# Environments
+.venv/
+.venv-vllm/
+venv*/
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Run outputs
+wandb/
+logs/
+*.log
+checkpoints/
+checkpoints_*/
+act_cache*/
+*.out
+*.err
+core
+core.[0-9]*

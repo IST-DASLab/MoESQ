@@ -1,0 +1,64 @@
+# Ablation, gate-weight exponent p=1.
+
+model:
+  name: Qwen/Qwen3-30B-A3B
+  device: cuda
+  dtype: bfloat16
+
+data:
+  dataset_name: mixed
+  batch_size: 64
+  num_samples: 8192
+  max_length: 4096
+  num_workers: 8
+  val_samples: 128
+
+compression:
+  prunen: 4
+  prunem: 8
+  quant_type: nvfp4
+  groupsize: 16 # if sparsity constraints are there, it will be automatically adjusted to 32.
+  learn_weight_values: true
+  fake_quantize_activations: true   # NVFP4 act fake-quant in forward
+
+init:
+  method: gptq
+  wbits: 4
+  nsamples: 512
+  sym: true
+  trits: false
+  percdamp: 0.01
+  blocksize: 128
+  static_groups: false
+
+refine:
+  enabled: true
+  start_layer: 0
+  self_attn: false
+  num_epochs: 10
+  device_microbatch_size: 16
+  warmup_steps: 0
+  lr_decay_type: cosine
+  scheduler_min_lr: 0.1
+  masks_lr: 0.00025
+  weights_lr: 5.0e-5
+  weight_decay: 1.0
+  lion_betas: [0.9, 0.95]
+  temperature: [2.0, 0.05]
+  scale: [100, 500]
+  strength: 4
+  std: 0.01
+  logits_dtype: bfloat16
+  gate_weight_exponent: 1
+  divergence_warn_ratio: 1.5
+
+training:
+  checkpoint_dir: checkpoints/
+  log_dir: logs
+  eval_baseline: false
+  ppl_eval_every_n_layers: 6
+  meta_init_std: 0.02
+  act_cache_dir: act_cache
+  act_cache_mmap_threshold_gb: 2.0
+
+wandb: true

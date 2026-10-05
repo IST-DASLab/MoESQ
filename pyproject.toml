@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moe-sq"
+version = "0.1.0"
+description = "MoESQ: Hardware-Native Joint Sparse-Quantization for Trillion-Scale Mixture-of-Experts"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Kwanhee Lee" },
+]
+license = { text = "Apache-2.0" }
+keywords = ["MoE", "quantization", "sparsity", "NVFP4", "GPTQ", "LLM"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy>=1.26",
+    # HuggingFace ecosystem
+    "transformers==5.17.0",
+    "accelerate>=0.33",
+    "datasets>=2.20",
+    "safetensors>=0.4",
+    "compressed-tensors==0.19.0",
+    # Optimizer
+    "lion-pytorch>=0.2",
+    # Experiment tracking
+    "wandb>=0.17",
+    # Utilities
+    "tqdm>=4.66",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "tiktoken>=0.7",
+    "lm-eval[api]>=0.4.11",
+]
+
+[project.optional-dependencies]
+# PyTorch. beware of CUDA version. verified on torch==2.11.0+cu130: pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu130
+torch = ["torch"]
+# Flash-attention 2 for transformer backends that support it. find pre-built wheels here: https://mjunya.com/flash-attention-prebuild-wheels/
+flash = ["flash-attn==2.8.3"]
+# Kimi-K3 remote code: Kimi Delta Attention kernels (Triton) and einops.
+kimi-k3 = ["fla-core==0.5.2", "einops>=0.8"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
