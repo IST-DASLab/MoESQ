@@ -2616,10 +2616,10 @@ index d269c6f109..ec31fdf559 100644
          return TopKWeightAndReduceDelegate()
 diff --git a/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py b/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py
 new file mode 100644
-index 0000000000..46b2c9049a
+index 0000000000..90761efeee
 --- /dev/null
 +++ b/vllm/model_executor/layers/fused_moe/experts/paired48_nvfp4_moe.py
-@@ -0,0 +1,742 @@
+@@ -0,0 +1,757 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""SM100 / SM120 paired-4:8 NVFP4 (W4A4) batched MoE experts.
@@ -3222,6 +3222,19 @@ index 0000000000..46b2c9049a
 +        )
 +
 +
++def _capacity_bucket(m: int) -> int:
++    """Per-expert row capacity for ``m`` tokens: the next power of two (>= 16).
++
++    The batched operands are ``[E, cap, ...]``, so their size follows the step's token
++    count. For MoE layers run eagerly (steps past the CUDA-graph sizes) a size that
++    changes every step keeps missing the caching allocator (cudaMalloc per call, and
++    fragmentation that makes unrelated allocations miss too); powers of two repeat.
++    Capacity only bounds the rows; outputs are unchanged (rows past each expert's
++    count are never read, and every tactic gives the same bytes).
++    """
++    return max(16, 1 << (max(1, m) - 1).bit_length())
++
++
 +class Paired48Nvfp4ExpertsStandard(Paired48Nvfp4ExpertsModular):
 +    """Paired-4:8 NVFP4 experts on token-order (Standard format) activations.
 +
@@ -3283,12 +3296,13 @@ index 0000000000..46b2c9049a
 +        expert_tokens_meta: mk.ExpertTokensMetadata | None,
 +        activation: MoEActivation,
 +    ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-+        # Per-expert capacity M: a token routes to distinct experts. workspace13
-+        # holds the GEMM2 output [E, M, K], workspace2 the GEMM1 output
-+        # [E, M, 2 * intermediate]; output is the reduced [M, K].
++        # Per-expert capacity cap >= M: a token routes to distinct experts.
++        # workspace13 holds the GEMM2 output [E, cap, K], workspace2 the GEMM1
++        # output [E, cap, 2 * intermediate]; output is the reduced [M, K].
++        cap = _capacity_bucket(M)
 +        return (
-+            (local_num_experts, M, K),
-+            (local_num_experts, M, N),
++            (local_num_experts, cap, K),
++            (local_num_experts, cap, N),
 +            (M, K),
 +        )
 +
@@ -3316,15 +3330,16 @@ index 0000000000..46b2c9049a
 +        prequantized = hidden_states.dtype == torch.uint8
 +        k = hidden_states.size(1) * (2 if prequantized else 1)
 +        n = w2.shape[2] * 2
++        cap = _capacity_bucket(M)
 +        counts, route_dest, src_tok, src_route = ops.paired_nvfp4_dispatch_plan(
-+            topk_ids.contiguous(), self.first_expert, E, M
++            topk_ids.contiguous(), self.first_expert, E, cap
 +        )
 +        if prequantized:
 +            # FP4 rows from before the all2all; the router weight, if applied
 +            # on the input, was applied before quantization.
 +            assert a1q_scale is not None
 +            a1_fp4, a1_sf = ops.paired_nvfp4_scatter_fp4_planned(
-+                hidden_states, a1q_scale.contiguous(), src_tok, counts, M
++                hidden_states, a1q_scale.contiguous(), src_tok, counts, cap
 +            )
 +        else:
 +            assert hidden_states.dtype == torch.bfloat16
@@ -3340,9 +3355,9 @@ index 0000000000..46b2c9049a
 +                w_in,
 +                self.a1_gscale.reshape(-1).contiguous(),
 +                counts,
-+                M,
++                cap,
 +            )
-+        fused_out = _resize_cache(workspace13, (E, M, k))
++        fused_out = _resize_cache(workspace13, (E, cap, k))
 +        run_paired_nvfp4_moe(
 +            output=fused_out,
 +            hidden_states=a1_fp4,
@@ -3351,7 +3366,7 @@ index 0000000000..46b2c9049a
 +            activation=activation,
 +            workspace13=workspace13,
 +            workspace2=workspace2,
-+            max_n=M,
++            max_n=cap,
 +            n=n,
 +            k=k,
 +            a1q_scale=a1_sf,
@@ -4257,6 +4272,29 @@ index e5d2b601a7..52246954ca 100644
          )
          hook()
          return receiver()
+diff --git a/vllm/model_executor/layers/fused_moe/router/grouped_topk_router.py b/vllm/model_executor/layers/fused_moe/router/grouped_topk_router.py
+index 2df3489358..e2d11daa0a 100644
+--- a/vllm/model_executor/layers/fused_moe/router/grouped_topk_router.py
++++ b/vllm/model_executor/layers/fused_moe/router/grouped_topk_router.py
+@@ -331,6 +331,18 @@ class GroupedTopKRouter(BaseRouter):
+                 rocm_aiter_grouped_topk,
+                 num_fused_shared_experts=self.num_fused_shared_experts,
+             )
++        elif (
++            envs.VLLM_USE_FUSED_MOE_GROUPED_TOPK
++            and current_platform.is_cuda()
++            and self.num_expert_group <= 32
++            and self.top_k <= 32
++            and self.e_score_correction_bias is not None
++        ):
++            # The cases grouped_topk sends to the fused CUDA kernel anyway: call it
++            # directly. grouped_topk is torch.compile'd, and for MoE layers run eagerly
++            # (steps past the CUDA-graph sizes) its guard check and compiled-region call
++            # cost ~0.1 ms of host time per layer, more than the kernel itself.
++            grouped_topk_impl = fused_grouped_topk
+         else:
+             grouped_topk_impl = grouped_topk
+ 
 diff --git a/vllm/model_executor/layers/fused_moe/utils.py b/vllm/model_executor/layers/fused_moe/utils.py
 index cfc3be3e8e..99f126c3a5 100644
 --- a/vllm/model_executor/layers/fused_moe/utils.py
