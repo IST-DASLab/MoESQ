@@ -10,7 +10,7 @@ which are included as a git submodule pinned to release
 
 | File | Purpose |
 |---|---|
-| `moe-sq-v0.30.0.patch` | The `paired48_nvfp4` backend for vLLM v0.30.0: about 4.7k lines of Python in 27 files, no C++ |
+| `moe-sq-v0.30.0.patch` | The `paired48_nvfp4` backend for vLLM v0.30.0: about 4.8k lines of Python in 28 files, no C++ |
 | `install.sh` | Clones vLLM v0.30.0, applies the patch, installs the precompiled vLLM wheel, and builds the kernels against the same torch |
 
 ## Install
