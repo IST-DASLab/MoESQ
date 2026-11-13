@@ -14,8 +14,8 @@
 #   VLLM_DIR           vLLM source checkout        (default: <repo>/build/vllm)
 #   TORCH_BACKEND      torch CUDA variant          (default: cu130; must match nvcc)
 #   ALLOW_CUDA_MISMATCH=1  proceed even if nvcc and TORCH_BACKEND differ
-#   PAIRED_NVFP4_ARCHS kernel target archs         (default: this machine's GPU, 100a or
-#                      120a; "100a;120a" builds one wheel for both; 100a without a GPU)
+#   PAIRED_NVFP4_ARCHS kernel target archs         (default: this machine's GPU, 100a, 103a
+#                      or 120a; "100a;120a" builds one wheel for both; 100a without a GPU)
 #   MAX_JOBS           kernel build parallelism    (default: 8)
 set -euo pipefail
 
@@ -27,7 +27,8 @@ TORCH_BACKEND="${TORCH_BACKEND:-cu130}"
 KERNEL_DIR="$REPO_ROOT/third_party/grouped-sparse-GEMM"
 # The kernel release the vLLM patch is pinned to (the submodule commit).
 KERNEL_TAG=v0.14.0
-KERNEL_COMMIT=39c1c826647c81a597dada79c0c337e3b985cdd3
+# sm103-port: v0.14.0 + SM103 (B300) build (grouped-sparse-GEMM branch sm103-port).
+KERNEL_COMMIT=458f73d3d0a92ec7697feac7886694f395e0b28e
 PATCH="$HERE/moe-sq-v0.30.0.patch"
 VLLM_TAG=v0.30.0
 VLLM_COMMIT=ced6857afa0ea7b2e3f0846a62e1394e90f15607
@@ -56,15 +57,15 @@ git -C "$REPO_ROOT" submodule update --init --recursive third_party/grouped-spar
     || die "$KERNEL_DIR is not at grouped-sparse-GEMM $KERNEL_TAG ($KERNEL_COMMIT);" \
         "run: git submodule update --init third_party/grouped-sparse-GEMM"
 
-# Kernel archs: default to the GPU in this machine (SM100 -> 100a, SM120 -> 120a).
+# Kernel archs: default to the GPU in this machine (SM100 -> 100a, SM103 -> 103a, SM120 -> 120a).
 if [ -z "${PAIRED_NVFP4_ARCHS:-}" ]; then
     CAP="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
         | head -n1 | tr -d ' .' || true)"
     case "$CAP" in
-        100|120) PAIRED_NVFP4_ARCHS="${CAP}a" ;;
+        100|103|120) PAIRED_NVFP4_ARCHS="${CAP}a" ;;
         "") PAIRED_NVFP4_ARCHS=100a
             echo "no GPU visible; building the kernels for 100a (set PAIRED_NVFP4_ARCHS)" ;;
-        *) die "GPU compute capability $CAP is not supported (SM100 or SM120 only);" \
+        *) die "GPU compute capability $CAP is not supported (SM100, SM103 or SM120 only);" \
             "set PAIRED_NVFP4_ARCHS to build anyway" ;;
     esac
 fi
